@@ -1,0 +1,128 @@
+import json
+import uuid
+from datetime import datetime
+from database import get_brief_count, insert_brief, get_recent_signals, get_feed_items
+from scorer import calculate_threat_score, calculate_velocity, get_threat_level
+
+def generate_brief_id():
+    """Generate a unique brief ID in format BRF-0001."""
+    count = get_brief_count()
+    return f"BRF-{str(count + 1).zfill(4)}"
+
+def generate_brief_title(signal, patterns):
+    """Generate a descriptive title for the brief."""
+    location = signal.get("geo_tag", "Unknown Region")
+    content = signal.get("content", "")
+
+    # Extract key action from content
+    action = "Conflict Activity"
+    if any(p in patterns for p in ["military_escalation", "ceasefire_violation"]):
+        action = "Military Escalation"
+    elif "humanitarian_crisis" in patterns:
+        action = "Humanitarian Crisis"
+    elif "diplomatic_tension" in patterns:
+        action = "Diplomatic Tensions"
+    elif "cyber_activity" in patterns:
+        action = "Cyber Activity"
+    elif "drone_activity" in patterns:
+        action = "Drone Operations"
+
+    return f"{action} Detected - {location}"
+
+def generate_summary(signal, patterns, threat_score):
+    """Generate an intelligence summary."""
+    location = signal.get("location", signal.get("geo_tag", "Unknown"))
+    actors = signal.get("actors", [])
+    if isinstance(actors, str):
+        try:
+            actors = json.loads(actors)
+        except:
+            actors = [actors] if actors else []
+
+    actor_str = ", ".join(actors[:2]) if actors else "Unknown actors"
+
+    summaries = [
+        f"Signal detected indicating {get_threat_level(threat_score).lower()} threat levels "
+        f"in {location}. {actor_str} involved. Pattern: {', '.join(patterns[:2])}. "
+        f"Source: {signal.get('source', 'Unknown')}.",
+
+        f"Intelligence assessment of {location} region suggests elevated tension. "
+        f"Reported activity involves {actor_str}. Threat classification: "
+        f"{get_threat_level(threat_score)}. Monitor closely for escalation.",
+
+        f"Cross-source analysis identifies concerning developments in {location}. "
+        f"Actors identified: {actor_str}. Hostility indicators elevated. "
+        f"Recommend heightened monitoring.",
+    ]
+
+    return summaries[0]
+
+def generate_brief(signal, patterns, all_signals=None):
+    """Generate a complete intelligence brief from a signal."""
+    threat_score = calculate_threat_score(signal, patterns)
+    velocity = calculate_velocity(all_signals or [signal])
+
+    actors = signal.get("actors", [])
+    if isinstance(actors, str):
+        try:
+            actors = json.loads(actors)
+        except:
+            actors = [actors] if actors else []
+
+    locations = signal.get("locations", [])
+    if isinstance(locations, str):
+        try:
+            locations = json.loads(locations)
+        except:
+            locations = [locations] if locations else []
+
+    brief = {
+        "id": generate_brief_id(),
+        "title": generate_brief_title(signal, patterns),
+        "threat_score": threat_score,
+        "signal_velocity": velocity,
+        "summary": generate_summary(signal, patterns, threat_score),
+        "sentiment_hostility": signal.get("sentiment_score", 0) * signal.get("hostility_score", 0),
+        "pattern_match": ", ".join(patterns[:3]),
+        "actors": actors,
+        "locations": locations,
+        "sources": [signal.get("source", "Unknown")],
+        "status": "triggered",
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+    return brief
+
+def auto_generate_briefs(signals, threshold=7.0):
+    """Auto-generate briefs for signals exceeding threat threshold."""
+    from preprocessor import detect_pattern, preprocess_signal
+
+    generated_briefs = []
+
+    for signal in signals:
+        # Preprocess to ensure scores are calculated
+        signal = preprocess_signal(signal)
+
+        # Detect patterns
+        patterns = detect_pattern(signal)
+
+        # Calculate threat score
+        threat_score = calculate_threat_score(signal, patterns)
+
+        # Auto-generate brief if threshold exceeded
+        if threat_score >= threshold:
+            brief = generate_brief(signal, patterns, signals)
+            insert_brief(brief)
+            generated_briefs.append(brief)
+
+            # Add to feed
+            from database import insert_feed_item
+            insert_feed_item({
+                "source": signal.get("source", "System"),
+                "content": f"Brief generated: {brief['title']} (Threat: {threat_score})",
+                "timestamp": datetime.utcnow().isoformat(),
+                "sentiment": get_threat_level(threat_score),
+            })
+
+    return generated_briefs
