@@ -1,0 +1,282 @@
+"""
+India-Focused Social Media Data Sources for Conflict EWS.
+Focus: Reddit, YouTube, NewsAPI - All India-related content.
+"""
+
+import requests
+import xml.etree.ElementTree as ET
+from datetime import datetime
+from config import (
+    NEWSAPI_KEY, GEMINI_API_KEY, USE_NEWSAPI, USE_REDDIT, USE_YOUTUBE,
+    REDDIT_FEEDS, YOUTUBE_API_KEY, YOUTUBE_CHANNELS, NEWSAPI_QUERY, FOCUS_COUNTRY
+)
+
+# India-specific keywords for filtering
+INDIA_KEYWORDS = [
+    "india", "indian", "bharat", "delhi", "mumbai", "kolkata", "chennai",
+    "modi", "amit shah", "rahul gandhi", "kejriwal", "yogi",
+    "bjp", "congress", "aap", "cpm", "cpi",
+    "hindu", "muslim", "sikh", "christian",
+    "kashmir", "jammu", "ladakh", "uttarakhand",
+    "karnataka", "maharashtra", "uttar pradesh", "bihar", "west bengal",
+    "farmers protest", "caa", "nrc", "article 370",
+    "adani", "ambani", "tata", " Infosys",
+    "ipl", "cricket", "bollywood",
+    "pakistan", "china border", "lac",
+]
+
+def is_india_related(text):
+    """Check if content is India-related."""
+    text_lower = text.lower()
+    return any(kw.lower() in text_lower for kw in INDIA_KEYWORDS)
+
+def extract_geo_from_text(text):
+    """Extract geographic tags from Indian regions."""
+    geo_tags = {
+        "delhi": "IND/DEL", "new delhi": "IND/DEL", "mumbai": "IND/MUM",
+        "kolkata": "IND/KOL", "chennai": "IND/CHE", "bangalore": "IND/BNG",
+        "hyderabad": "IND/HYD", "pune": "IND/PUN", "ahmedabad": "IND/AHM",
+        "kashmir": "IND/KAS", "jammu": "IND/JAM", "ladakh": "IND/LAD",
+        "karnataka": "IND/KAR", "maharashtra": "IND/MAH", "uttar pradesh": "IND/UP",
+        "bihar": "IND/BIH", "west bengal": "IND/WB", "gujarat": "IND/GUJ",
+        "tamil nadu": "IND/TN", "kerala": "IND/KER", "rajasthan": "IND/RAJ",
+        "haryana": "IND/HRY", "punjab": "IND/PUN", "himalaya": "IND/ HIM",
+        "assam": "IND/ASS", "odisha": "IND/ODI", "jharkhand": "IND/JHA",
+        "chhattisgarh": "IND/CHH", "madhya pradesh": "IND/MP",
+        "pakistan": "PAK", "bangladesh": "BGD", "sri lanka": "LKA",
+        "nepal": "NPL", "china": "CHN", " LAC ": "IND/CHN",
+    }
+
+    text_lower = text.lower()
+
+    for keyword, tag in geo_tags.items():
+        if keyword in text_lower:
+            return tag
+
+    return "IND"  # Default to India
+
+# ============================================
+# REDDIT - India Focused Subreddits
+# ============================================
+
+def fetch_reddit_feeds():
+    """
+    Fetch from India-focused Reddit subreddits.
+    """
+    if not USE_REDDIT:
+        return []
+
+    signals = []
+    headers = {'User-Agent': 'ConflictEWS/1.0 (India Focus Project)'}
+
+    for url in REDDIT_FEEDS:
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                posts = data.get('data', {}).get('children', [])
+
+                for post in posts[:10]:
+                    post_data = post.get('data', {})
+                    title = post_data.get('title', '')
+                    subreddit = post_data.get('subreddit', '')
+
+                    if title and len(title) > 30 and is_india_related(title):
+                        signal = {
+                            "source": f"Reddit/{subreddit}",
+                            "content": title,
+                            "geo_tag": extract_geo_from_text(title),
+                            "language": "en",
+                            "sentiment_score": 0.0,
+                            "hostility_score": 0.0,
+                            "actors": [],
+                            "locations": [],
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                        signals.append(signal)
+
+        except Exception as e:
+            print(f"Reddit fetch error: {e}")
+            continue
+
+    return signals
+
+
+# ============================================
+# YOUTUBE API - India News Channels
+# ============================================
+
+def fetch_youtube_videos():
+    """
+    Fetch recent videos from YouTube using India-focused search.
+    Uses YouTube Data API v3.
+    """
+    if not USE_YOUTUBE or not YOUTUBE_API_KEY:
+        return []
+
+    signals = []
+
+    try:
+        # Search for India news, controversies, protests
+        search_queries = [
+            "india controversy protest",
+            "india political news",
+            "india communal violence",
+            "india farmer protest",
+            "india election news"
+        ]
+
+        for query in search_queries[:2]:  # Limit to avoid quota issues
+            url = "https://www.googleapis.com/youtube/v3/search"
+
+            params = {
+                "key": YOUTUBE_API_KEY,
+                "part": "snippet",
+                "type": "video",
+                "order": "date",
+                "maxResults": 10,
+                "q": query,
+                "relevanceLanguage": "en"
+            }
+
+            response = requests.get(url, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                for item in data.get('items', []):
+                    snippet = item.get('snippet', {})
+                    title = snippet.get('title', '')
+                    channel_title = snippet.get('channelTitle', '')
+                    published = snippet.get('publishedAt', '')
+
+                    # Filter for India-related content
+                    if title and is_india_related(title):
+                        signal = {
+                            "source": f"YouTube/{channel_title}",
+                            "content": title,
+                            "geo_tag": extract_geo_from_text(title),
+                            "language": "en",
+                            "sentiment_score": 0.0,
+                            "hostility_score": 0.0,
+                            "actors": [],
+                            "locations": [],
+                            "timestamp": published or datetime.utcnow().isoformat()
+                        }
+                        signals.append(signal)
+
+    except Exception as e:
+        print(f"YouTube fetch error: {e}")
+
+    # Remove duplicates based on content
+    seen = set()
+    unique_signals = []
+    for s in signals:
+        if s['content'] not in seen:
+            seen.add(s['content'])
+            unique_signals.append(s)
+
+    return unique_signals
+
+
+# ============================================
+# NEWSAPI - India-Focused Search
+# ============================================
+
+def fetch_newsapi_india():
+    """
+    Fetch India-related news from NewsAPI.
+    """
+    if not USE_NEWSAPI or not NEWSAPI_KEY:
+        return []
+
+    signals = []
+
+    try:
+        url = "https://newsapi.org/v2/everything"
+
+        params = {
+            "q": NEWSAPI_QUERY,
+            "apiKey": NEWSAPI_KEY,
+            "language": "en",
+            "sortBy": "publishedAt",
+            "pageSize": 20
+        }
+
+        response = requests.get(url, params=params, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+
+            for article in data.get('articles', [])[:15]:
+                title = article.get('title', '')
+                source = article.get('source', {}).get('name', '')
+                published = article.get('publishedAt', '')
+
+                if title and 'Removed' not in title and is_india_related(title):
+                    try:
+                        parsed_date = datetime.fromisoformat(published.replace('Z', '+00:00'))
+                    except:
+                        parsed_date = datetime.utcnow()
+
+                    signal = {
+                        "source": f"NewsAPI/{source}",
+                        "content": title,
+                        "geo_tag": extract_geo_from_text(title),
+                        "language": "en",
+                        "sentiment_score": 0.0,
+                        "hostility_score": 0.0,
+                        "actors": [],
+                        "locations": [],
+                        "timestamp": parsed_date.isoformat()
+                    }
+                    signals.append(signal)
+
+    except Exception as e:
+        print(f"NewsAPI fetch error: {e}")
+
+    return signals
+
+
+# ============================================
+# Combined Fetch Function
+# ============================================
+
+def fetch_all_sources():
+    """
+    Fetch from all India-focused social media sources.
+    """
+    all_signals = []
+
+    # Reddit - India subreddits
+    reddit_signals = fetch_reddit_feeds()
+    if reddit_signals:
+        all_signals.extend(reddit_signals)
+        print(f"India signals from Reddit: {len(reddit_signals)}")
+
+    # YouTube - India news channels
+    youtube_signals = fetch_youtube_videos()
+    if youtube_signals:
+        all_signals.extend(youtube_signals)
+        print(f"India signals from YouTube: {len(youtube_signals)}")
+
+    # NewsAPI - India search
+    newsapi_signals = fetch_newsapi_india()
+    if newsapi_signals:
+        all_signals.extend(newsapi_signals)
+        print(f"India signals from NewsAPI: {len(newsapi_signals)}")
+
+    # Filter to only India-related
+    india_signals = [s for s in all_signals if is_india_related(s.get('content', ''))]
+
+    print(f"Total India-focused signals: {len(india_signals)}")
+    return india_signals
+
+
+if __name__ == "__main__":
+    print("Testing India-focused sources...")
+    signals = fetch_all_sources()
+    print(f"\nGot {len(signals)} India-focused signals")
+    for s in signals[:5]:
+        print(f"  [{s['geo_tag']}] {s['content'][:60]}... | {s['source']}")
