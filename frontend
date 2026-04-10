@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Conflict Early Warning System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            navy: {
+              900: '#0a0e1a',
+              800: '#111827',
+              700: '#1f2937',
+              600: '#374151'
+            },
+            cyan: {
+              glow: '#00f0ff',
+              dim: '#0891b2'
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace']
+          },
+          animation: {
+            'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+            'slide-in': 'slide-in 0.3s ease-out',
+            'scale-in': 'scale-in 0.2s ease-out'
+          },
+          keyframes: {
+            'pulse-glow': {
+              '0%, 100%': { boxShadow: '0 0 5px #00f0ff, 0 0 10px #00f0ff40' },
+              '50%': { boxShadow: '0 0 15px #00f0ff, 0 0 30px #00f0ff60' }
+            },
+            'slide-in': {
+              '0%': { transform: 'translateX(20px)', opacity: '0' },
+              '100%': { transform: 'translateX(0)', opacity: '1' }
+            },
+            'scale-in': {
+              '0%': { transform: 'scale(0.95)', opacity: '0' },
+              '100%': { transform: 'scale(1)', opacity: '1' }
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background: #0a0e1a;
+      margin: 0;
+      min-height: 100vh;
+    }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111827; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+    .glow-border { box-shadow: inset 0 0 20px rgba(0, 240, 255, 0.1), 0 0 20px rgba(0, 240, 255, 0.05); }
+    .card-hover:hover { box-shadow: 0 0 20px rgba(0, 240, 255, 0.15); }
+    @keyframes pulse-red {
+      0%, 100% { filter: drop-shadow(0 0 3px #ef4444); }
+      50% { filter: drop-shadow(0 0 10px #ef4444); }
+    }
+    .pulse-red { animation: pulse-red 1.5s ease-in-out infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // ============ ICONS ============
+    const Icon = ({ name, size = 20, className = '' }) => {
+      const ref = React.useRef(null);
+      useEffect(() => {
+        if (ref.current) {
+          ref.current.innerHTML = '';
+          const icon = lucide.createElement(lucide.icons[name]);
+          if (icon) ref.current.appendChild(icon);
+        }
+      }, [name]);
+      return <span ref={ref} className={`inline-flex items-center justify-center ${className}`} style={{ width: size, height: size }} />;
+    };
+
+    // ============ MOCK DATA ============
+    const MOCK_BRIEFS = [
+      {
+        id: 'BRF-2847',
+        title: 'Escalating Border Tensions in Eastern Donbas Region',
+        threatScore: 8.7,
+        signalVelocity: 23.5,
+        entities: {
+          actors: ['4th Tank Division', 'PMC Wagner Group'],
+          locations: ['Donetsk Oblast', 'Luhansk Oblast', 'Mariupol']
+        },
+        timestamp: new Date(Date.now() - 1000 * 60 * 12),
+        sources: [
+          'https://x.com/milinformations',
+          'https://www.reuters.com/article/ukraine-conflict',
+          'https://t.me/war_monitor/1847'
+        ],
+        summary: 'Intelligence indicators suggest imminent escalation along the eastern contact line. Satellite imagery reveals unprecedented troop concentrations and armor movement patterns consistent with offensive operations. SIGINT intercepts indicate coordinated command signals among separatist formations. Civilian evacuation notices have been issued in three adjacent settlements.',
+        sentimentHostility: 87,
+        patternMatch: 'Matches 2022 Kharkiv Counter-Offensive Pattern - Phase 2 Preparation'
+      },
+      {
+        id: 'BRF-2846',
+        title: 'South China Sea Naval Activity Spike',
+        threatScore: 7.2,
+        signalVelocity: 15.8,
+        entities: {
+          actors: ['PLAN South Fleet', 'USS Ronald Reagan CSG'],
+          locations: ['Spratly Islands', ' Scarborough Shoal', 'Taiwan Strait']
+        },
+        timestamp: new Date(Date.now() - 1000 * 60 * 34),
+        sources: [
+          'https://news.yahoo.com/south-china-sea-naval',
+          'https://x.com/NavalNewsDD',
+          'https://www.bbc.com/news/world-asia'
+        ],
+        summary: 'AIS tracking and commercial satellite imagery indicate increased PLAN vessel activity in contested waters. Unusual formation patterns suggest joint air-naval exercise. US carrier group maintains strategic distance while conducting routine patrol.',
+        sentimentHostility: 72,
+        patternMatch: 'Correlates with 2023 Taiwan Strait Crisis - Assertive Posturing Phase'
+      },
+      {
+        id: 'BRF-2845',
+        title: 'Sahel Region Militant Group Coalition Forming',
+        threatScore: 6.9,
+        signalVelocity: -5.2,
+        entities: {
+          actors: ['JNIM', 'EIGS', 'Boko Haram'],
+          locations: ['Mali', 'Burkina Faso', 'Niger']
+        },
+        timestamp: new Date(Date.now() - 1000 * 60 * 58),
+        sources: [
+          'https://www.aljazeera.com/africa',
+          'https://x.com/SahelIntel',
+          'https://www.crisisgroup.org/sahel'
+        ],
+        summary: 'Cross-border intelligence sharing reveals potential merger talks between three major militant organizations. While historically competitive, shared anti-French sentiment may provide common cause. French drawdown creates power vacuum.',
+        sentimentHostility: 69,
+        patternMatch: 'Analogous to 2017 ISIS-Mali Franchise Expansion'
+      },
+      {
+        id: 'BRF-2844',
+        title: 'Korean Peninsula BMD Exercise Anomalies',
+        threatScore: 9.1,
+        signalVelocity: 42.1,
+        entities: {
+          actors: ['ROKAF', 'KPA Strategic Forces'],
+          locations: ['Pyongyang', 'Seoul', 'Incheon']
+        },
+        timestamp: new Date(Date.now() - 1000 * 60 * 89),
+        sources: [
+          'https://38north.org/pacific-forum',
+          'https://x.com/KoreanAnalyst',
+          'https://www.nti.org/ regions/northeast-asia'
+        ],
+        summary: 'Ballistic missile defense radar signatures indicate unusual trajectory patterns inconsistent with standard exercises. DPRK notification protocols were not followed. KPA strategic force communication spike detected on frequencies associated with nuclear release authorization.',
+        sentimentHostility: 91,
+        patternMatch: 'Similar to 2017 Hwasong-15 Test Escalation Profile'
+      },
+      {
+        id: 'BRF-2843',
+        title: 'Arctic Passage Military Infrastructure Development',
+        threatScore: 5.4,
+        signalVelocity: 8.3,
+        entities: {
+          actors: ['Northern Fleet', 'Coast Guard Russia'],
+          locations: ['Kara Sea', 'Novaya Zemlya', 'Laptev Sea']
+        },
+        timestamp: new Date(Date.now() - 1000 * 60 * 127),
+        sources: [
+          'https://www.arctictoday.com/russia-arctic',
+          'https://x.com/ArcticInstitute',
+          'https://www.thebarentsdesk.com'
+        ],
+        summary: 'Construction activity and resupply missions indicate permanent military installation development. Climate change enabling increased naval access. Russian sovereignty claims being reinforced through physical presence.',
+        sentimentHostility: 54,
+        patternMatch: 'Matches Russian Arctic Militarization Trend (2014-Present)'
+      }
+    ];
+
+    const MOCK_FEED = [
+      { id: 1, source: 'X', content: 'Reports of heavy armor movement near #Donetsk - multiple satellite confirmations. @OSINTteam', timestamp: new Date(Date.now() - 1000 * 45), sentiment: 'negative' },
+      { id: 2, source: 'NewsAPI', content: 'UN Security Council emergency session called as tensions escalate in South China Sea', timestamp: new Date(Date.now() - 1000 * 120), sentiment: 'neutral' },
+      { id: 3, source: 'Telegram', content: 'Source confirms weapons cache discovery in northern #Mali - French forces on high alert', timestamp: new Date(Date.now() - 1000 * 180), sentiment: 'negative' },
+      { id: 4, source: 'Reddit', content: 'r/geopolitics thread analyzing DPRK missile test patterns hitting front page - 15k upvotes', timestamp: new Date(Date.now() - 1000 * 240), sentiment: 'neutral' },
+      { id: 5, source: 'X', content: '#Breaking Russian Northern Fleet vessels conducting exercises in #KaraSea - unusual winter activity', timestamp: new Date(Date.now() - 1000 * 300), sentiment: 'negative' },
+      { id: 6, source: 'NewsAPI', content: 'Regional powers call for de-escalation as border incidents multiply in Eastern Europe', timestamp: new Date(Date.now() - 1000 * 360), sentiment: 'neutral' },
+      { id: 7, source: 'Telegram', content: 'Civilian convoy from Mariupol reports checkpoints reinforcing - evacuation route closing', timestamp: new Date(Date.now() - 1000 * 420), sentiment: 'negative' },
+      { id: 8, source: 'Reddit', content: 'Deep dive analysis: Why the Spratly Islands matter more than ever - comprehensive thread', timestamp: new Date(Date.now() - 1000 * 480), sentiment: 'neutral' },
+      { id: 9, source: 'X', content: 'PHOTOS: New radar installations spotted on disputed island - military grade equipment', timestamp: new Date(Date.now() - 1000 * 540), sentiment: 'negative' },
+      { id: 10, source: 'NewsAPI', content: 'NATO allies pledge additional air defense systems to Baltic states amid concerns', timestamp: new Date(Date.now() - 1000 * 600), sentiment: 'positive' }
+    ];
+
+    // ============ COMPONENTS ============
+
+    // Circular Gauge Component
+    const CircularGauge = ({ score, size = 80 }) => {
+      const radius = (size - 12) / 2;
+      const circumference = 2 * Math.PI * radius;
+      const offset = circumference - (score / 10) * circumference;
+
+      const getColor = () => {
+        if (score >= 9) return '#ef4444';
+        if (score >= 7) return '#f97316';
+        if (score >= 5) return '#f59e0b';
+        return '#22c55e';
+      };
+
+      const color = getColor();
+
+      return (
+        <div className="relative" style={{ width: size, height: size }}>
+          <svg width={size} height={size} className="transform -rotate-90">
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke="#1f2937"
+              strokeWidth="8"
+            />
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={radius}
+              fill="none"
+              stroke={color}
+              strokeWidth="8"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              className={score >= 9 ? 'pulse-red' : ''}
+              style={{ filter: `drop-shadow(0 0 6px ${color})` }}
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="font-mono text-lg font-bold text-white">{score.toFixed(1)}</span>
+          </div>
+        </div>
+      );
+    };
+
+    // Signal Velocity Indicator
+    const SignalVelocity = ({ velocity }) => {
+      const isUp = velocity >= 0;
+      return (
+        <div className={`flex items-center gap-1 px-2 py-1 rounded ${isUp ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}`}>
+          <Icon name={isUp ? 'TrendingUp' : 'TrendingDown'} size={14} />
+          <span className="font-mono text-xs font-medium">{Math.abs(velocity)}%</span>
+        </div>
+      );
+    };
+
+    // Entity Chip
+    const EntityChip = ({ type, label }) => (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+        type === 'actor'
+          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+          : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+      }`}>
+        <Icon name={type === 'actor' ? 'User' : 'MapPin'} size={10} />
+        {label}
+      </span>
+    );
+
+    // Source Badge
+    const SourceBadge = ({ source }) => {
+      const styles = {
+        'X': 'bg-gray-700/50 text-gray-300 border-gray-600',
+        'Reddit': 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+        'NewsAPI': 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+        'Telegram': 'bg-sky-500/20 text-sky-400 border-sky-500/30'
+      };
+      return (
+        <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${styles[source] || styles['X']}`}>
+          {source}
+        </span>
+      );
+    };
+
+    // Threat Score Bar
+    const ThreatScoreBar = ({ score }) => {
+      const getColor = () => {
+        if (score >= 80) return 'bg-red-500';
+        if (score >= 60) return 'bg-orange-500';
+        if (score >= 40) return 'bg-yellow-500';
+        return 'bg-green-500';
+      };
+      return (
+        <div className="flex items-center gap-3">
+          <div className="flex-1 h-3 bg-navy-700 rounded-full overflow-hidden">
+            <div className={`h-full ${getColor()} transition-all duration-500`} style={{ width: `${score}%` }} />
+          </div>
+          <span className="font-mono text-sm font-bold text-white w-12 text-right">{score}</span>
+        </div>
+      );
+    };
+
+    // Header Component
+    const Header = ({ lastSignalTime }) => {
+      const [timeLeft, setTimeLeft] = useState('');
+
+      useEffect(() => {
+        const updateCountdown = () => {
+          const diff = Date.now() - lastSignalTime.getTime();
+          const mins = Math.floor(diff / 60000);
+          const secs = Math.floor((diff % 60000) / 1000);
+          setTimeLeft(`${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`);
+        };
+        updateCountdown();
+        const interval = setInterval(updateCountdown, 1000);
+        return () => clearInterval(interval);
+      }, [lastSignalTime]);
+
+      return (
+        <header className="bg-navy-800/80 backdrop-blur-sm border-b border-cyan-500/20 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="p-2 bg-cyan-500/10 rounded-lg border border-cyan-500/30">
+                <Icon name="ShieldAlert" size={28} className="text-cyan-glow" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-white tracking-tight">Conflict Early Warning System</h1>
+    
+              </div>
+            </div>
+
+            <div className="flex items-center gap-8">
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse" />
+                  <div className="absolute inset-0 w-2.5 h-2.5 bg-green-500 rounded-full animate-ping" />
+                </div>
+                <span className="text-sm font-medium text-green-400">SYSTEM ACTIVE</span>
+              </div>
+
+              <div className="h-8 w-px bg-gray-700" />
+
+              <div className="flex items-center gap-3 bg-navy-700/50 px-4 py-2 rounded-lg border border-gray-600/30">
+                <Icon name="Clock" size={16} className="text-gray-400" />
+                <span className="text-xs text-gray-400">Time to Last Signal</span>
+                <span className="font-mono text-lg font-bold text-cyan-glow">{timeLeft}</span>
+              </div>
+            </div>
+          </div>
+        </header>
+      );
+    };
+
+    // Brief Card Component
+    const BriefCard = ({ brief, onClick, isExpanded, onToggleSources }) => {
+      const timeAgo = (date) => {
+        const diff = Date.now() - date.getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 60) return `${mins}m ago`;
+        const hrs = Math.floor(mins / 60);
+        return `${hrs}h ago`;
+      };
+
+      const borderColor = brief.threatScore >= 9 ? 'border-l-red-500' :
+                         brief.threatScore >= 7 ? 'border-l-orange-500' :
+                         brief.threatScore >= 5 ? 'border-l-yellow-500' : 'border-l-green-500';
+
+      return (
+        <div
+          className={`bg-navy-800 rounded-lg border border-gray-700/50 border-l-4 ${borderColor} card-hover transition-all duration-300 overflow-hidden ${isExpanded ? 'ring-1 ring-cyan-500/30' : ''}`}
+        >
+          <div className="p-4 cursor-pointer" onClick={onClick}>
+            <div className="flex items-start gap-4">
+              <CircularGauge score={brief.threatScore} />
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-mono text-xs text-cyan-500">{brief.id}</span>
+                      <span className="text-gray-500">•</span>
+                      <span className="text-xs text-gray-500">{timeAgo(brief.timestamp)}</span>
+                    </div>
+                    <h3 className="text-sm font-semibold text-white leading-snug">{brief.title}</h3>
+                  </div>
+                  <SignalVelocity velocity={brief.signalVelocity} />
+                </div>
+
+                <div className="flex flex-wrap gap-1.5 mb-3">
+                  {brief.entities.actors.slice(0, 2).map((actor, i) => (
+                    <EntityChip key={i} type="actor" label={actor} />
+                  ))}
+                  {brief.entities.locations.slice(0, 2).map((loc, i) => (
+                    <EntityChip key={i} type="location" label={loc} />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className={`overflow-hidden transition-all duration-300 ${isExpanded ? 'max-h-40' : 'max-h-0'}`}>
+            <div className="px-4 pb-4 pt-2 border-t border-gray-700/30">
+              <button
+                onClick={(e) => { e.stopPropagation(); onToggleSources(); }}
+                className="flex items-center gap-2 text-xs text-cyan-400 hover:text-cyan-300 transition-colors mb-2"
+              >
+                <Icon name="Link" size={12} />
+                Source Traceability ({brief.sources.length} sources)
+                <Icon name={isExpanded ? 'ChevronUp' : 'ChevronDown'} size={12} />
+              </button>
+              {isExpanded && (
+                <div className="space-y-1 pl-4">
+                  {brief.sources.map((source, i) => (
+                    <a key={i} href={source} target="_blank" rel="noopener noreferrer"
+                       className="block text-xs text-gray-400 hover:text-cyan-400 truncate transition-colors">
+                      <Icon name="ExternalLink" size={10} className="inline mr-1" />
+                      {source.replace('https://', '')}
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Alert Panel Component
+    const AlertPanel = ({ briefs, expandedId, onToggleExpand, onCardClick }) => {
+      const triggeredBriefs = briefs.filter(b => b.threatScore >= 7);
+
+      return (
+        <div className="bg-navy-800/50 rounded-xl border border-gray-700/30 glow-border">
+          <div className="p-4 border-b border-gray-700/30 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Icon name="AlertTriangle" size={20} className="text-orange-400" />
+              <h2 className="text-sm font-bold text-white tracking-wide">TRIGGERED BRIEFS</h2>
+              <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs font-bold rounded-full border border-red-500/30">
+                {triggeredBriefs.length}
+              </span>
+            </div>
+            <span className="text-xs text-gray-500">Score ≥ 7.0</span>
+          </div>
+
+          <div className="p-3 space-y-3 max-h-[calc(100vh-280px)] overflow-y-auto">
+            {triggeredBriefs.map(brief => (
+              <BriefCard
+                key={brief.id}
+                brief={brief}
+                onClick={() => onCardClick(brief)}
+                isExpanded={expandedId === brief.id}
+                onToggleSources={() => onToggleExpand(expandedId === brief.id ? null : brief.id)}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // Intelligence Feed Component
+    const IntelligenceFeed = ({ items }) => {
+      const sentimentIcon = (sentiment) => {
+        if (sentiment === 'negative') return <Icon name="TrendingDown" size={12} className="text-red-400" />;
+        if (sentiment === 'positive') return <Icon name="TrendingUp" size={12} className="text-green-400" />;
+        return <Icon name="Minus" size={12} className="text-gray-400" />;
+      };
+
+      const timeAgo = (date) => {
+        const diff = Date.now() - date.getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 60) return `${mins}m`;
+        const hrs = Math.floor(mins / 60);
+        return `${hrs}h`;
+      };
+
+      return (
+        <div className="bg-navy-800/50 rounded-xl border border-gray-700/30">
+          <div className="p-4 border-b border-gray-700/30 flex items-center gap-3">
+            <Icon name="Radio" size={18} className="text-cyan-400 animate-pulse" />
+            <h2 className="text-sm font-bold text-white tracking-wide">LIVE INTELLIGENCE FEED</h2>
+            <div className="flex gap-1">
+              <SourceBadge source="X" />
+              <SourceBadge source="Reddit" />
+              <SourceBadge source="NewsAPI" />
+              <SourceBadge source="Telegram" />
+            </div>
+          </div>
+
+          <div className="p-3 space-y-2 max-h-[calc(100vh-280px)] overflow-y-auto">
+            {items.map((item, index) => (
+              <div
+                key={item.id}
+                className="bg-navy-700/30 rounded-lg p-3 border border-gray-700/20 hover:border-cyan-500/20 transition-all animate-slide-in"
+                style={{ animationDelay: `${index * 50}ms` }}
+              >
+                <div className="flex items-start justify-between gap-2 mb-1.5">
+                  <SourceBadge source={item.source} />
+                  <div className="flex items-center gap-2">
+                    {sentimentIcon(item.sentiment)}
+                    <span className="text-xs text-gray-500">{timeAgo(item.timestamp)}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-300 leading-relaxed">{item.content}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
+    // Geographic Heatmap Component
+    const GeographicHeatmap = () => {
+      const hotspots = [
+        { x: 65, y: 35, intensity: 0.9, label: 'Eastern Europe' },
+        { x: 78, y: 42, intensity: 0.7, label: 'Korean Peninsula' },
+        { x: 82, y: 55, intensity: 0.6, label: 'South China Sea' },
+        { x: 48, y: 65, intensity: 0.5, label: 'Sahel Region' },
+        { x: 72, y: 78, intensity: 0.4, label: 'Arctic Zone' }
+      ];
+
+      return (
+        <div className="bg-navy-800/50 rounded-xl border border-gray-700/30 overflow-hidden">
+          <div className="p-4 border-b border-gray-700/30 flex items-center gap-3">
+            <Icon name="Globe" size={18} className="text-orange-400" />
+            <h2 className="text-sm font-bold text-white tracking-wide">REGIONAL RISK CONCENTRATION</h2>
+          </div>
+
+          <div className="relative h-48 bg-gradient-to-br from-navy-900 via-navy-800 to-navy-900 overflow-hidden">
+            {/* Grid Pattern */}
+            <div className="absolute inset-0 opacity-10"
+                 style={{
+                   backgroundImage: 'linear-gradient(rgba(0,240,255,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(0,240,255,0.3) 1px, transparent 1px)',
+                   backgroundSize: '40px 40px'
+                 }} />
+
+            {/* Region Labels */}
+            <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {/* Simplified continent outlines */}
+              <path d="M 55 25 Q 60 30, 58 40 Q 55 45, 60 50 L 65 48 Q 70 45, 68 40 Q 65 30, 55 25"
+                    fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.3)" strokeWidth="0.3" />
+              <path d="M 70 35 Q 80 38, 85 45 Q 90 50, 88 55 Q 85 60, 75 58 L 72 50 Q 70 45, 70 35"
+                    fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.3)" strokeWidth="0.3" />
+              <path d="M 40 50 Q 45 55, 50 60 Q 55 70, 50 75 Q 45 78, 40 72 Q 38 65, 40 50"
+                    fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.3)" strokeWidth="0.3" />
+              <path d="M 65 70 Q 75 72, 80 78 Q 82 85, 78 90 Q 70 92, 65 85 Q 62 78, 65 70"
+                    fill="rgba(59,130,246,0.1)" stroke="rgba(59,130,246,0.3)" strokeWidth="0.3" />
+            </svg>
+
+            {/* Hotspots */}
+            {hotspots.map((spot, i) => (
+              <div
+                key={i}
+                className="absolute"
+                style={{ left: `${spot.x}%`, top: `${spot.y}%` }}
+              >
+                <div
+                  className="absolute w-8 h-8 rounded-full animate-ping"
+                  style={{
+                    background: `radial-gradient(circle, rgba(239,68,68,${spot.intensity * 0.5}) 0%, transparent 70%)`,
+                    animationDuration: `${2 + i * 0.5}s`
+                  }}
+                />
+                <div
+                  className="relative w-4 h-4 rounded-full"
+                  style={{
+                    background: `radial-gradient(circle, rgba(239,68,68,${spot.intensity}) 0%, rgba(239,68,68,0.3) 50%, transparent 70%)`,
+                    boxShadow: `0 0 ${10 + spot.intensity * 10}px rgba(239,68,68,${spot.intensity * 0.8})`
+                  }}
+                />
+                <span className="absolute left-5 top-0 text-xs text-gray-400 whitespace-nowrap font-mono">
+                  {spot.label}
+                </span>
+              </div>
+            ))}
+
+            {/* Coordinate markers */}
+            <div className="absolute bottom-2 right-2 text-xs font-mono text-gray-600">
+              +15.4% RISK ▲
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Intelligence Brief Modal
+    const BriefModal = ({ brief, onClose }) => {
+      if (!brief) return null;
+
+      useEffect(() => {
+        const handleEsc = (e) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', handleEsc);
+        document.body.style.overflow = 'hidden';
+        return () => {
+          document.removeEventListener('keydown', handleEsc);
+          document.body.style.overflow = '';
+        };
+      }, [onClose]);
+
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+          <div
+            className="relative bg-navy-800 rounded-xl border border-cyan-500/30 w-full max-w-2xl max-h-[85vh] overflow-y-auto animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+            style={{ boxShadow: '0 0 40px rgba(0,240,255,0.1), inset 0 0 60px rgba(0,240,255,0.02)' }}
+          >
+            {/* Header */}
+            <div className="sticky top-0 bg-navy-800/95 backdrop-blur-sm p-4 border-b border-gray-700/30 flex items-start justify-between">
+              <div className="flex items-start gap-4">
+                <CircularGauge score={brief.threatScore} size={70} />
+                <div>
+                  <span className="font-mono text-sm text-cyan-500">{brief.id}</span>
+                  <h2 className="text-lg font-bold text-white mt-1">{brief.title}</h2>
+                  <div className="flex items-center gap-3 mt-2">
+                    <SignalVelocity velocity={brief.signalVelocity} />
+                    <span className="text-xs text-gray-500">
+                      {brief.timestamp.toLocaleTimeString()} {brief.timestamp.toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-navy-700 rounded-lg transition-colors text-gray-400 hover:text-white"
+              >
+                <Icon name="X" size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-5 space-y-5">
+              {/* Executive Summary */}
+              <div>
+                <h3 className="text-sm font-bold text-cyan-400 mb-2 flex items-center gap-2">
+                  <Icon name="FileText" size={14} />
+                  EXECUTIVE SUMMARY
+                </h3>
+                <p className="text-sm text-gray-300 leading-relaxed bg-navy-900/50 rounded-lg p-3 border border-gray-700/20">
+                  {brief.summary}
+                </p>
+              </div>
+
+              {/* Sentiment Hostility Rating */}
+              <div>
+                <h3 className="text-sm font-bold text-cyan-400 mb-2 flex items-center gap-2">
+                  <Icon name="Gauge" size={14} />
+                  SENTIMENT HOSTILITY RATING
+                </h3>
+                <div className="bg-navy-900/50 rounded-lg p-3 border border-gray-700/20">
+                  <ThreatScoreBar score={brief.sentimentHostility} />
+                  <p className="text-xs text-gray-500 mt-2">
+                    {brief.sentimentHostility >= 80 ? 'Critical hostile indicators detected' :
+                     brief.sentimentHostility >= 60 ? 'Elevated hostility markers present' :
+                     brief.sentimentHostility >= 40 ? 'Moderate tension signatures' :
+                     'Baseline operational environment'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Pattern Match Signature */}
+              <div>
+                <h3 className="text-sm font-bold text-cyan-400 mb-2 flex items-center gap-2">
+                  <Icon name="Fingerprint" size={14} />
+                  PATTERN MATCH SIGNATURE
+                </h3>
+                <div className="bg-navy-900/50 rounded-lg p-3 border border-orange-500/20">
+                  <p className="text-sm text-orange-300 font-medium">{brief.patternMatch}</p>
+                  <p className="text-xs text-gray-500 mt-2">
+                    Historical correlation: 87.3% similarity to referenced event sequence
+                  </p>
+                </div>
+              </div>
+
+              {/* Entities */}
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-purple-400 mb-2 flex items-center gap-2">
+                    <Icon name="Users" size={14} />
+                    KEY ACTORS
+                  </h3>
+                  <div className="space-y-1">
+                    {brief.entities.actors.map((actor, i) => (
+                      <div key={i} className="flex items-center gap-2 text-sm text-gray-300">
+                        <span className="w-1.5 h-1.5 bg-purple-500 rounded-full" />
+                        {actor}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-cyan-400 mb-2 flex items-center gap-2">
+                    <Icon name="MapPin" size={14} />
+                    AFFECTED LOCATIONS
+                  </h3>
+                  <div className="space-y-1">
+                    {brief.entities.locations.map((loc, i) => (
+                      <div key={i} className="flex items-center gap-2 text-sm text-gray-300">
+                        <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full" />
+                        {loc}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Source Traceability */}
+              <div>
+                <h3 className="text-sm font-bold text-cyan-400 mb-2 flex items-center gap-2">
+                  <Icon name="Link" size={14} />
+                  SOURCE TRACEABILITY ({brief.sources.length})
+                </h3>
+                <div className="space-y-2">
+                  {brief.sources.map((source, i) => (
+                    <a
+                      key={i}
+                      href={source}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-2 text-sm text-gray-400 hover:text-cyan-400 bg-navy-900/50 rounded-lg p-2 border border-gray-700/20 hover:border-cyan-500/30 transition-colors"
+                    >
+                      <Icon name="ExternalLink" size={12} />
+                      <span className="flex-1 truncate">{source}</span>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Stats Bar Component
+    const StatsBar = () => {
+      const stats = [
+        { label: 'Active Briefs', value: MOCK_BRIEFS.length, icon: 'FileText' },
+        { label: 'High Priority', value: MOCK_BRIEFS.filter(b => b.threatScore >= 8).length, icon: 'AlertOctagon', color: 'text-red-400' },
+        { label: 'Sources Monitored', value: '847', icon: 'Radio' },
+        { label: 'Regions Covered', value: '12', icon: 'Globe' }
+      ];
+
+      return (
+        <div className="grid grid-cols-4 gap-3">
+          {stats.map((stat, i) => (
+            <div key={i} className="bg-navy-800/50 rounded-lg p-3 border border-gray-700/30 flex items-center gap-3">
+              <div className={`p-2 rounded-lg bg-navy-700/50 ${stat.color || 'text-cyan-400'}`}>
+                <Icon name={stat.icon} size={16} />
+              </div>
+              <div>
+                <p className={`text-lg font-bold font-mono ${stat.color || 'text-white'}`}>{stat.value}</p>
+                <p className="text-xs text-gray-500">{stat.label}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    };
+
+    // Main Dashboard Component
+    const Dashboard = () => {
+      const [expandedBriefId, setExpandedBriefId] = useState(null);
+      const [selectedBrief, setSelectedBrief] = useState(null);
+      const [lastSignalTime] = useState(new Date(Date.now() - 1000 * 60 * 2));
+      const [feedItems, setFeedItems] = useState(MOCK_FEED);
+
+      // Simulate new feed items
+      useEffect(() => {
+        const interval = setInterval(() => {
+          const sources = ['X', 'Reddit', 'NewsAPI', 'Telegram'];
+          const contents = [
+            'New satellite imagery reveals undisclosed military installation',
+            'Diplomatic channels reportedly opening between conflicting parties',
+            'Local sources confirm supply route disruption',
+            'International observers call for immediate ceasefire',
+            'Cybersecurity threat detected in critical infrastructure'
+          ];
+          const sentiments = ['negative', 'neutral', 'positive'];
+
+          const newItem = {
+            id: Date.now(),
+            source: sources[Math.floor(Math.random() * sources.length)],
+            content: contents[Math.floor(Math.random() * contents.length)],
+            timestamp: new Date(),
+            sentiment: sentiments[Math.floor(Math.random() * sentiments.length)]
+          };
+
+          setFeedItems(prev => [newItem, ...prev.slice(0, 9)]);
+        }, 8000);
+
+        return () => clearInterval(interval);
+      }, []);
+
+      return (
+        <div className="min-h-screen bg-navy-900 font-sans">
+          <Header lastSignalTime={lastSignalTime} />
+
+          <main className="p-6">
+            <StatsBar />
+
+            {/* 7-Column Grid Layout */}
+            <div className="grid grid-cols-12 gap-6 mt-6">
+              {/* Alert Panel - 7 columns */}
+              <div className="col-span-12 lg:col-span-7">
+                <AlertPanel
+                  briefs={MOCK_BRIEFS}
+                  expandedId={expandedBriefId}
+                  onToggleExpand={setExpandedBriefId}
+                  onCardClick={setSelectedBrief}
+                />
+              </div>
+
+              {/* Right Column - 5 columns */}
+              <div className="col-span-12 lg:col-span-5 space-y-6">
+                <IntelligenceFeed items={feedItems} />
+                <GeographicHeatmap />
+              </div>
+            </div>
+          </main>
+
+          {/* Modal */}
+          <BriefModal brief={selectedBrief} onClose={() => setSelectedBrief(null)} />
+        </div>
+      );
+    };
+
+    // Render
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<Dashboard />);
+  </script>
+</body>
+</html>
