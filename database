@@ -1,0 +1,231 @@
+import sqlite3
+import json
+from datetime import datetime
+from config import DATABASE_PATH
+
+def get_connection():
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT,
+            content TEXT,
+            geo_tag TEXT,
+            language TEXT DEFAULT 'en',
+            sentiment_score REAL,
+            hostility_score REAL,
+            actors TEXT,
+            locations TEXT,
+            timestamp TEXT,
+            processed INTEGER DEFAULT 0
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS briefs (
+            id TEXT PRIMARY KEY,
+            title TEXT,
+            threat_score REAL,
+            signal_velocity REAL,
+            summary TEXT,
+            sentiment_hostility REAL,
+            pattern_match TEXT,
+            actors TEXT,
+            locations TEXT,
+            sources TEXT,
+            status TEXT DEFAULT 'triggered',
+            created_at TEXT,
+            updated_at TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS feed_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source TEXT,
+            content TEXT,
+            timestamp TEXT,
+            sentiment TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS system_stats (
+            id INTEGER DEFAULT 1,
+            active_briefs INTEGER DEFAULT 0,
+            high_priority INTEGER DEFAULT 0,
+            sources_monitored INTEGER DEFAULT 847,
+            regions_covered INTEGER DEFAULT 12,
+            last_updated TEXT
+        )
+    ''')
+
+    cursor.execute('SELECT COUNT(*) FROM system_stats')
+    if cursor.fetchone()[0] == 0:
+        cursor.execute('''
+            INSERT INTO system_stats (id, active_briefs, high_priority, sources_monitored, regions_covered, last_updated)
+            VALUES (1, 0, 0, 847, 12, ?)
+        ''', (datetime.utcnow().isoformat(),))
+
+    conn.commit()
+    conn.close()
+
+def insert_signal(signal):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO signals (source, content, geo_tag, language, sentiment_score, hostility_score, actors, locations, timestamp, processed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    ''', (
+        signal.get('source'),
+        signal.get('content'),
+        signal.get('geo_tag'),
+        signal.get('language', 'en'),
+        signal.get('sentiment_score'),
+        signal.get('hostility_score'),
+        json.dumps(signal.get('actors', [])),
+        json.dumps(signal.get('locations', [])),
+        signal.get('timestamp')
+    ))
+    signal_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return signal_id
+
+def get_unprocessed_signals():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM signals WHERE processed = 0')
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def mark_signal_processed(signal_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('UPDATE signals SET processed = 1 WHERE id = ?', (signal_id,))
+    conn.commit()
+    conn.close()
+
+def insert_brief(brief):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR REPLACE INTO briefs (id, title, threat_score, signal_velocity, summary, sentiment_hostility, pattern_match, actors, locations, sources, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        brief.get('id'),
+        brief.get('title'),
+        brief.get('threat_score'),
+        brief.get('signal_velocity'),
+        brief.get('summary'),
+        brief.get('sentiment_hostility'),
+        brief.get('pattern_match'),
+        json.dumps(brief.get('actors', [])),
+        json.dumps(brief.get('locations', [])),
+        json.dumps(brief.get('sources', [])),
+        brief.get('status', 'triggered'),
+        brief.get('created_at'),
+        brief.get('updated_at')
+    ))
+    conn.commit()
+    conn.close()
+
+def get_briefs(limit=20):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM briefs ORDER BY created_at DESC LIMIT ?', (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def update_brief_status(brief_id, status):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('UPDATE briefs SET status = ?, updated_at = ? WHERE id = ?',
+                  (status, datetime.utcnow().isoformat(), brief_id))
+    conn.commit()
+    conn.close()
+
+def insert_feed_item(item):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO feed_items (source, content, timestamp, sentiment)
+        VALUES (?, ?, ?, ?)
+    ''', (item.get('source'), item.get('content'), item.get('timestamp'), item.get('sentiment')))
+    conn.commit()
+    conn.close()
+
+def get_feed_items(limit=50):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM feed_items ORDER BY timestamp DESC LIMIT ?', (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_system_stats():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM system_stats WHERE id = 1')
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_system_stats(stats):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        UPDATE system_stats SET
+            active_briefs = ?,
+            high_priority = ?,
+            sources_monitored = ?,
+            regions_covered = ?,
+            last_updated = ?
+        WHERE id = 1
+    ''', (
+        stats.get('active_briefs', 0),
+        stats.get('high_priority', 0),
+        stats.get('sources_monitored', 847),
+        stats.get('regions_covered', 12),
+        datetime.utcnow().isoformat()
+    ))
+    conn.commit()
+    conn.close()
+
+def get_recent_signals(hours=24, limit=100):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM signals
+        WHERE timestamp >= datetime('now', '-' || ? || ' hours')
+        ORDER BY timestamp DESC
+        LIMIT ?
+    ''', (hours, limit))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+def get_brief_count():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM briefs WHERE status = 'triggered'")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_high_priority_count(threshold=7.0):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM briefs WHERE threat_score >= ? AND status = "triggered"', (threshold,))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
