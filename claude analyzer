@@ -1,0 +1,132 @@
+"""
+Claude API integration for advanced signal analysis.
+Works with or without API key - graceful fallback to rule-based analysis.
+"""
+
+import json
+import os
+from config import ANTHROPIC_API_KEY
+
+# Claude API integration - optional, falls back to rule-based analysis
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+def analyze_with_claude(content, signals_context=None):
+    """
+    Analyze content using Claude API.
+    Falls back to rule-based analysis if no API key is available.
+    """
+    if not ANTHROPIC_API_KEY:
+        return rule_based_analysis(content, signals_context)
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        prompt = f"""Analyze this intelligence signal for conflict indicators:
+
+Signal: {content}
+
+Provide a JSON response with:
+- threat_level: 0-10
+- key_actors: list of identified actors
+- key_locations: list of locations mentioned
+- conflict_type: type of conflict detected
+- confidence: 0-1 confidence score
+- recommendation: brief recommendation
+"""
+
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        return json.loads(response.content[0].text)
+
+    except Exception as e:
+        print(f"Claude API error: {e}")
+        return rule_based_analysis(content, signals_context)
+
+def rule_based_analysis(content, signals_context=None):
+    """
+    Rule-based fallback analysis when Claude API is not available.
+    """
+    content_lower = content.lower()
+
+    # Threat keywords
+    threat_indicators = {
+        "attack": 2.0, "invasion": 3.0, "war": 3.0, "massacre": 4.0,
+        "ceasefire violation": 2.5, "military buildup": 2.0, "combat": 2.0,
+        "drone": 1.0, "artillery": 1.5, "missile": 2.0, "killing": 2.5,
+    }
+
+    threat_score = 0.0
+    detected_threats = []
+
+    for indicator, weight in threat_indicators.items():
+        if indicator in content_lower:
+            threat_score += weight
+            detected_threats.append(indicator)
+
+    threat_score = min(10.0, threat_score)
+
+    # Actor extraction
+    actors = extract_actors_rule_based(content_lower)
+
+    # Location extraction
+    locations = extract_locations_rule_based(content_lower)
+
+    # Conflict type classification
+    conflict_type = classify_conflict(content_lower)
+
+    return {
+        "threat_level": round(threat_score, 1),
+        "key_actors": actors,
+        "key_locations": locations,
+        "conflict_type": conflict_type,
+        "confidence": 0.7 if not ANTHROPIC_API_KEY else 0.9,
+        "recommendation": "Monitor closely" if threat_score >= 5 else "Standard watch",
+        "detected_threats": detected_threats,
+        "analysis_method": "rule_based" if not ANTHROPIC_API_KEY else "claude_api",
+    }
+
+def extract_actors_rule_based(text):
+    """Extract known actors using pattern matching."""
+    known_actors = [
+        "fsb", "ukrainian", "russian", "houthis", "taliban", "isis",
+        "wagner", "ypg", "kurdish", "hezbollah", "israeli", "russia",
+    ]
+
+    found = []
+    for actor in known_actors:
+        if actor in text:
+            found.append(actor.title())
+
+    return found[:5]
+
+def extract_locations_rule_based(text):
+    """Extract known locations using pattern matching."""
+    known_locations = [
+        "ukraine", "gaza", "mekong", "kashmir", "somalia", "baltic",
+        "donbas", "donetsk", "crimea", "taiwan", "south china sea",
+    ]
+
+    found = []
+    for loc in known_locations:
+        if loc in text:
+            found.append(loc.title())
+
+    return found[:5]
+
+def classify_conflict(text):
+    """Classify the type of conflict."""
+    if any(w in text for w in ["military", "army", "soldiers", "combat"]):
+        return "military"
+    elif any(w in text for w in ["political", "diplomat", "talks", "negotiations"]):
+        return "political"
+    elif any(w in text for w in ["civilians", "refugees", "humanitarian"]):
+        return "humanitarian"
+    elif any(w in text for w in ["cyber", "hack", "digital"]):
+        return "cyber"
+    else:
+        return "general"
