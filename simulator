@@ -1,0 +1,121 @@
+import random
+import json
+from datetime import datetime, timedelta
+
+# Realistic conflict zones and actors
+CONFLICT_REGIONS = [
+    {"region": "Eastern Ukraine", "geo": "UKR", "lat": 48.5, "lon": 32.0},
+    {"region": "Gaza Strip", "geo": "PSE", "lat": 31.4, "lon": 34.3},
+    {"region": "Mekong Delta", "geo": "VNM", "lat": 10.5, "lon": 106.0},
+    {"region": "Kashmir Border", "geo": "IND", "lat": 34.1, "lon": 74.8},
+    {"region": "Somali Border", "geo": "SOM", "lat": 6.0, "lon": 46.0},
+    {"region": "Baltic States", "geo": "EST", "lat": 59.0, "lon": 26.0},
+    {"region": "South China Sea", "geo": "CHN", "lat": 15.0, "lon": 115.0},
+    {"region": "Kurdish Region", "geo": "TUR", "lat": 37.5, "lon": 42.0},
+]
+
+ACTORS = [
+    "FSB operatives", "Ukrainian drone units", "Houthi commanders",
+    "Taliban fighters", "ISIS cells", "M23 rebels", " Wagner Group",
+    "Kurdish YPG", "Russian Spetsnaz", "Israeli Mossad",
+    "Hezbollah units", "Boko Haram", "Military sources", "Insurgent groups",
+    "Border patrol", "Unknown armed groups", "National Guard",
+]
+
+SOURCES = ["X (Twitter)", "Reddit", "Telegram", "NewsAPI", "GDELT", "Open Source Intel"]
+
+# Event templates by category
+EVENT_TEMPLATES = {
+    "military": [
+        "{actor} deploying armor units near {location}",
+        "Artillery exchanges reported between {actor} and government forces in {location}",
+        "{actor} claims control of strategic height near {location}",
+        "Military convoy of {actor} spotted moving toward {location}",
+        "{actor} launching coordinated attacks along {location} border",
+        "Drone surveillance by {actor} increased over {location}",
+        "{actor} establishing new forward operating base near {location}",
+    ],
+    "political": [
+        "Diplomatic talks between {actor} collapse amid accusations",
+        "{actor} issues ultimatum to government forces in {location}",
+        "Emergency session convened after {actor} statements",
+        "{actor} declares indefinite ceasefire in {location} region",
+        "International mediators express concern over {actor} actions",
+        "{actor} signs defense pact with third party affecting {location}",
+    ],
+    "humanitarian": [
+        "Civilian casualties reported after {actor} operation in {location}",
+        "{actor} blocking humanitarian aid routes to {location}",
+        "Refugee convoy from {location} targeted by {actor}",
+        "Medical facility in {location} overwhelmed with {actor} casualties",
+        "Food distribution center serving {location} targeted by {actor}",
+    ],
+    "strategic": [
+        "{actor} jamming communications in {location} area",
+        "Cyber attack infrastructure traced to {actor} in {location}",
+        "{actor} establishing drone detection zones near {location}",
+        "Satellite imagery shows {actor} build-up near {location}",
+        "GPS disruption reported in {location} region",
+    ],
+}
+
+THREAT_KEYWORDS = [
+    "attack", "invasion", "offensive", "escalation", "combat", "war",
+    "massacre", "atrocity", "ceasefire violation", "war crime",
+    "military buildup", "invasion", "annexation", "occupation",
+]
+
+def generate_signal():
+    region = random.choice(CONFLICT_REGIONS)
+    category = random.choice(list(EVENT_TEMPLATES.keys()))
+    template = random.choice(EVENT_TEMPLATES[category])
+    actor = random.choice(ACTORS)
+
+    content = template.format(actor=actor, location=region["region"])
+
+    # Generate threat indicators
+    has_threat_keyword = any(kw in content.lower() for kw in THREAT_KEYWORDS)
+    has_actor = actor in content
+
+    # Calculate base scores
+    hostility_base = random.uniform(0.4, 0.95) if has_threat_keyword else random.uniform(0.1, 0.5)
+    sentiment_base = -random.uniform(0.3, 0.9) if has_threat_keyword else random.uniform(-0.2, 0.3)
+
+    # Add some noise
+    hostility_score = min(1.0, max(0.0, hostility_base + random.uniform(-0.1, 0.1)))
+    sentiment_score = max(-1.0, min(1.0, sentiment_base + random.uniform(-0.1, 0.1)))
+
+    # Determine sentiment label
+    if sentiment_score < -0.5:
+        sentiment_label = "Highly Negative"
+    elif sentiment_score < -0.2:
+        sentiment_label = "Negative"
+    elif sentiment_score < 0.2:
+        sentiment_label = "Neutral"
+    elif sentiment_score < 0.5:
+        sentiment_label = "Positive"
+    else:
+        sentiment_label = "Highly Positive"
+
+    # Extract actors and locations
+    actors_list = [actor] if random.random() > 0.3 else [actor, random.choice([a for a in ACTORS if a != actor])]
+    locations_list = [region["region"]] if random.random() > 0.4 else [region["region"], random.choice([r["region"] for r in CONFLICT_REGIONS if r["region"] != region["region"]])]
+
+    timestamp = datetime.utcnow() - timedelta(seconds=random.randint(0, 3600))
+
+    signal = {
+        "source": random.choice(SOURCES),
+        "content": content,
+        "geo_tag": region["geo"],
+        "language": "en",
+        "sentiment_score": round(sentiment_score, 3),
+        "hostility_score": round(hostility_score, 3),
+        "actors": actors_list,
+        "locations": locations_list,
+        "timestamp": timestamp.isoformat(),
+    }
+
+    return signal
+
+def generate_batch(count=5):
+    return [generate_signal() for _ in range(count)]
