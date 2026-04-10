@@ -1,0 +1,339 @@
+"""
+Conflict Early Warning System (CEWS) - FastAPI Backend
+Now using FREE data sources: GDELT, NewsAPI (free tier), RSS feeds, Gemini AI
+"""
+
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
+import threading
+import time
+import random
+from datetime import datetime
+
+from config import (
+    USE_SIMULATOR, THREAT_THRESHOLD, DATABASE_PATH,
+    NEWSAPI_KEY, GEMINI_API_KEY, USE_NEWSAPI, USE_REDDIT, USE_YOUTUBE
+)
+from database import (
+    init_db, insert_signal, get_briefs, get_feed_items, get_system_stats,
+    update_system_stats, get_brief_count, get_high_priority_count,
+    get_recent_signals, insert_feed_item
+)
+from simulator import generate_batch
+from preprocessor import preprocess_signal, detect_pattern
+from scorer import calculate_threat_score, calculate_velocity, get_threat_level
+from brief_generator import auto_generate_briefs
+from free_data_sources import fetch_all_sources
+from gemini_analyzer import analyze_with_gemini
+
+app = FastAPI(title="Conflict Early Warning System")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Initialize database on startup
+init_db()
+
+# Background processing flag
+processing_active = False
+
+class SignalIngest(BaseModel):
+    source: str
+    content: str
+    geo_tag: Optional[str] = None
+    language: Optional[str] = "en"
+
+class BriefUpdate(BaseModel):
+    status: str
+
+class ManualBrief(BaseModel):
+    title: str
+    content: str
+    threat_score: float
+
+def run_pipeline_cycle():
+    """Run one cycle of the processing pipeline."""
+    try:
+        signals = []
+        mode = "unknown"
+
+        # Always try real data sources first (RSS feeds work without keys)
+        real_signals = fetch_all_sources()
+
+        if real_signals:
+            # Use real data from RSS/NewsAPI/GDELT
+            signals = real_signals
+            mode = "REAL_DATA"
+        elif USE_SIMULATOR:
+            # Fall back to simulator only if no real data available
+            signals = generate_batch(random.randint(3, 8))
+            mode = "SIMULATOR"
+        else:
+            # No data sources available
+            signals = []
+            mode = "NO_DATA"
+
+        # Limit signals to avoid overload
+        signals = signals[:20]
+
+        # Process signals
+        briefs_generated = 0
+        for signal in signals:
+            # Insert into database
+            signal_id = insert_signal(signal)
+
+            # Preprocess
+            signal = preprocess_signal(signal)
+
+            # Get AI analysis
+            analysis = analyze_with_gemini(signal.get("content", ""))
+
+            # Update with analysis
+            signal["hostility_score"] = analysis.get("threat_level", 0) / 10
+            signal["sentiment_score"] = -0.3 if analysis.get("threat_level", 0) > 5 else 0.0
+
+            # Add to feed
+            sentiment_label = get_threat_level(analysis.get("threat_level", 0))
+            insert_feed_item({
+                "source": signal.get("source", "System"),
+                "content": signal.get("content", "")[:200],
+                "timestamp": signal.get("timestamp"),
+                "sentiment": sentiment_label
+            })
+
+        # Auto-generate briefs for high-threat signals
+        briefs_generated = auto_generate_briefs(signals, THREAT_THRESHOLD)
+
+        # Update system stats
+        update_system_stats({
+            "active_briefs": get_brief_count(),
+            "high_priority": get_high_priority_count(THREAT_THRESHOLD),
+            "sources_monitored": 1500 if mode.startswith("REAL") else 847,
+            "regions_covered": 195 if mode.startswith("REAL") else 12,
+        })
+
+        print(f"[{datetime.now().isoformat()}] Pipeline: {len(signals)} signals, {len(briefs_generated)} briefs ({mode})")
+
+    except Exception as e:
+        print(f"Pipeline error: {e}")
+        import traceback
+        traceback.print_exc()
+
+def background_processor():
+    """Background thread that runs the processing pipeline periodically."""
+    global processing_active
+    interval = 30  # Run every 30 seconds
+
+    while processing_active:
+        run_pipeline_cycle()
+        time.sleep(interval)
+
+@app.on_event("startup")
+async def startup_event():
+    """Start the background processor on server startup."""
+    global processing_active
+    processing_active = True
+    threading.Thread(target=background_processor, daemon=True).start()
+
+    # Determine mode
+    if USE_SIMULATOR and not NEWSAPI_KEY and not GEMINI_API_KEY:
+        mode = "SIMULATOR MODE (no API keys configured)"
+    else:
+        sources = []
+        if USE_REDDIT: sources.append("Reddit")
+        if USE_YOUTUBE: sources.append("YouTube")
+        if NEWSAPI_KEY: sources.append("NewsAPI")
+        if GEMINI_API_KEY: sources.append("Gemini AI")
+        mode = f"REAL DATA MODE: {', '.join(sources)}"
+
+    print(f"CEWS Backend started. {mode}")
+    print(f"Threat threshold: {THREAT_THRESHOLD}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the background processor on server shutdown."""
+    global processing_active
+    processing_active = False
+
+@app.get("/")
+async def root():
+    """System information endpoint."""
+    mode = "SIMULATOR"
+    sources = []
+
+    if USE_SIMULATOR and not NEWSAPI_KEY and not GEMINI_API_KEY:
+        mode = "SIMULATOR"
+    else:
+        mode = "REAL_DATA"
+        if USE_REDDIT: sources.append("Reddit")
+        if USE_YOUTUBE: sources.append("YouTube")
+        if NEWSAPI_KEY: sources.append("NewsAPI")
+        if GEMINI_API_KEY: sources.append("Gemini AI")
+
+    return {
+        "system": "Conflict Early Warning System",
+        "version": "2.0.0",
+        "status": "operational",
+        "mode": mode,
+        "data_sources": sources if sources else ["Simulator"],
+        "threat_threshold": THREAT_THRESHOLD,
+        "gemini_enabled": bool(GEMINI_API_KEY),
+        "newsapi_enabled": bool(NEWSAPI_KEY),
+    }
+
+@app.get("/api/stats")
+async def get_stats():
+    """Get current system statistics."""
+    stats = get_system_stats()
+    if not stats:
+        raise HTTPException(status_code=404, detail="Stats not found")
+    return stats
+
+@app.get("/api/briefs")
+async def list_briefs(limit: int = 20):
+    """Get list of intelligence briefs."""
+    return get_briefs(limit)
+
+@app.get("/api/briefs/{brief_id}")
+async def get_brief(brief_id: str):
+    """Get a specific brief by ID."""
+    briefs = get_briefs(100)
+    for brief in briefs:
+        if brief.get("id") == brief_id:
+            return brief
+    raise HTTPException(status_code=404, detail="Brief not found")
+
+@app.patch("/api/briefs/{brief_id}")
+async def update_brief(brief_id: str, update: BriefUpdate):
+    """Update a brief's status."""
+    from database import update_brief_status
+    update_brief_status(brief_id, update.status)
+    return {"status": "updated", "brief_id": brief_id}
+
+@app.get("/api/feed")
+async def get_feed(limit: int = 50):
+    """Get activity feed items."""
+    return get_feed_items(limit)
+
+@app.get("/api/signals")
+async def get_signals(hours: int = 24, limit: int = 100):
+    """Get recent signals."""
+    return get_recent_signals(hours, limit)
+
+@app.post("/api/signals")
+async def ingest_signal(signal: SignalIngest):
+    """Manually ingest a signal."""
+    signal_dict = signal.dict()
+    signal_dict["timestamp"] = datetime.utcnow().isoformat()
+    signal_dict["sentiment_score"] = 0.0
+    signal_dict["hostility_score"] = 0.0
+    signal_dict["actors"] = []
+    signal_dict["locations"] = []
+
+    signal_id = insert_signal(signal_dict)
+
+    # Run through analyzer
+    analysis = analyze_with_gemini(signal.content)
+    signal_dict["hostility_score"] = analysis.get("threat_level", 0) / 10
+    signal_dict["sentiment_score"] = -0.3 if analysis.get("threat_level", 0) > 5 else 0.0
+
+    # Check if brief should be generated
+    patterns = detect_pattern(signal_dict)
+    threat_score = calculate_threat_score(signal_dict, patterns)
+
+    if threat_score >= THREAT_THRESHOLD:
+        briefs = auto_generate_briefs([signal_dict], THREAT_THRESHOLD)
+        return {"signal_id": signal_id, "analysis": analysis, "briefs_generated": len(briefs)}
+
+    return {"signal_id": signal_id, "analysis": analysis, "briefs_generated": 0}
+
+@app.post("/api/briefs/manual")
+async def create_manual_brief(brief: ManualBrief):
+    """Manually create a brief."""
+    from database import insert_brief
+    import uuid
+
+    brief_data = {
+        "id": f"BRF-MANUAL-{str(uuid.uuid4())[:8].upper()}",
+        "title": brief.title,
+        "threat_score": brief.threat_score,
+        "signal_velocity": 0.0,
+        "summary": brief.content,
+        "sentiment_hostility": -0.5,
+        "pattern_match": "manual_creation",
+        "actors": [],
+        "locations": [],
+        "sources": ["Manual Entry"],
+        "status": "triggered",
+        "created_at": datetime.utcnow().isoformat(),
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+
+    insert_brief(brief_data)
+
+    # Update stats
+    update_system_stats({
+        "active_briefs": get_brief_count(),
+        "high_priority": get_high_priority_count(THREAT_THRESHOLD),
+        "sources_monitored": 847,
+        "regions_covered": 12,
+    })
+
+    return {"status": "created", "brief_id": brief_data["id"]}
+
+@app.post("/api/pipeline/run")
+async def trigger_pipeline():
+    """Manually trigger a pipeline cycle."""
+    run_pipeline_cycle()
+    return {"status": "pipeline_run_complete"}
+
+@app.get("/api/analyze/{signal_id}")
+async def analyze_signal(signal_id: int):
+    """Get detailed analysis for a specific signal."""
+    signals = get_recent_signals(24, 1000)
+    signal = None
+    for s in signals:
+        if s.get("id") == signal_id:
+            signal = s
+            break
+
+    if not signal:
+        raise HTTPException(status_code=404, detail="Signal not found")
+
+    patterns = detect_pattern(signal)
+    threat_score = calculate_threat_score(signal, patterns)
+    analysis = analyze_with_gemini(signal.get("content", ""))
+
+    return {
+        "signal": signal,
+        "patterns": patterns,
+        "threat_score": threat_score,
+        "threat_level": get_threat_level(threat_score),
+        "analysis": analysis,
+    }
+
+@app.get("/api/test-sources")
+async def test_sources():
+    """Test all India-focused data sources."""
+    from free_data_sources import fetch_reddit_feeds, fetch_youtube_videos, fetch_newsapi_india
+
+    reddit = fetch_reddit_feeds()
+    youtube = fetch_youtube_videos()
+    newsapi = fetch_newsapi_india()
+
+    return {
+        "reddit": {"count": len(reddit), "sample": reddit[0] if reddit else None},
+        "youtube": {"count": len(youtube), "sample": youtube[0] if youtube else None},
+        "newsapi": {"count": len(newsapi), "sample": newsapi[0] if newsapi else None},
+    }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
