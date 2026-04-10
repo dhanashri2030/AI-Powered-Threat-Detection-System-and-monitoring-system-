@@ -1,0 +1,155 @@
+import re
+import json
+
+# Named entity patterns for conflict-related entities
+ENTITY_PATTERNS = {
+    "military_units": [
+        r'\b(FSA|ISIS|ISIL|IS|FSB|Spetsnaz|Wagner|YPG|SDF|IRGC|Hezbollah|Houthis)\b',
+        r'\b(Kurdish|Taliban|Boko Haram)\s+(fighters|forces|units|commanders)\b',
+    ],
+    "locations": [
+        r'\b(Ukraine|Gaza|Mekong|Kashmir|Somalia|Baltic|Donbas|Donetsk|Luhansk)\b',
+        r'\b(South China Sea|East China Sea|Mediterranean|Black Sea)\b',
+    ],
+    "weapons": [
+        r'\b(drone|drones|artillery|missile|cruise missile|bomb|bombing)\b',
+        r'\b(tank|armor|infantry|naval|submarine|aircraft)\b',
+    ],
+    "actions": [
+        r'\b(attack|invasion|occupation|annexation|escalation|offensive)\b',
+        r'\b(ceasefire|negotiations|talks|sanctions|ultimatum)\b',
+    ]
+}
+
+# Sentiment lexicon for conflict analysis
+POSITIVE_WORDS = {
+    "peace": 0.5, "ceasefire": 0.4, "agreement": 0.3, "treaty": 0.3,
+    "dialogue": 0.4, "negotiation": 0.3, "humanitarian": 0.2, "aid": 0.3,
+    " cooperation": 0.3, "support": 0.2, "alliance": 0.2,
+}
+
+NEGATIVE_WORDS = {
+    "attack": -0.6, "invasion": -0.8, "war": -0.7, "killing": -0.8,
+    "massacre": -0.9, "atrocity": -0.9, "destruction": -0.6, "bombing": -0.7,
+    "drone": -0.3, "rocket": -0.5, "missile": -0.5, "gunfire": -0.6,
+    "casualties": -0.5, "dead": -0.6, "wounded": -0.4, "detained": -0.3,
+    "torture": -0.8, "abuse": -0.6, "violation": -0.5, "threat": -0.4,
+}
+
+def extract_entities(text):
+    """Extract named entities from text using regex patterns."""
+    entities = {"military_units": [], "locations": [], "weapons": [], "actions": []}
+
+    for category, patterns in ENTITY_PATTERNS.items():
+        for pattern in patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            entities[category].extend(matches)
+
+    # Remove duplicates
+    for category in entities:
+        entities[category] = list(set(entities[category]))
+
+    return entities
+
+def calculate_sentiment(text):
+    """Calculate sentiment score based on lexicon."""
+    words = re.findall(r'\b\w+\b', text.lower())
+    score = 0.0
+    count = 0
+
+    for word in words:
+        if word in POSITIVE_WORDS:
+            score += POSITIVE_WORDS[word]
+            count += 1
+        elif word in NEGATIVE_WORDS:
+            score += NEGATIVE_WORDS[word]
+            count += 1
+
+    if count == 0:
+        return 0.0
+
+    return round(score / count, 3)
+
+def calculate_hostility(text):
+    """Calculate hostility score based on aggressive language."""
+    words = re.findall(r'\b\w+\b', text.lower())
+    hostile_count = 0
+
+    hostile_words = [
+        "attack", "invade", "destroy", "kill", "massacre", "bomb",
+        "strike", "assault", "raid", "ambush", "target", "eliminate",
+        "threaten", "coerce", "intimidate", "violate", "breach",
+    ]
+
+    for word in words:
+        if word in hostile_words:
+            hostile_count += 1
+
+    return round(min(1.0, hostile_count / max(1, len(words) * 0.1)), 3)
+
+def extract_locations(text):
+    """Extract geographic locations from text."""
+    location_patterns = [
+        r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b',
+    ]
+
+    known_locations = [
+        "Ukraine", "Gaza", "Mekong", "Kashmir", "Somalia", "Baltic",
+        "Donbas", "Donetsk", "Luhansk", "Crimea", "Kiev", "Kyiv",
+        "Moscow", "Tel Aviv", "Jerusalem", "Baghdad", "Kabul",
+        "Tehran", "Ankara", "Beijing", "Taiwan", "Hong Kong",
+    ]
+
+    found = []
+    for loc in known_locations:
+        if loc.lower() in text.lower():
+            found.append(loc)
+
+    return found if found else []
+
+def preprocess_signal(signal):
+    """Full preprocessing pipeline for a signal."""
+    text = signal.get("content", "")
+
+    # Extract entities
+    entities = extract_entities(text)
+
+    # Calculate sentiment
+    sentiment = calculate_sentiment(text)
+    signal["sentiment_score"] = sentiment
+
+    # Calculate hostility
+    hostility = calculate_hostility(text)
+    signal["hostility_score"] = hostility
+
+    # Extract locations
+    locations = extract_locations(text)
+    if locations and not signal.get("locations"):
+        signal["locations"] = locations
+
+    # Update actors from entities
+    if entities.get("military_units"):
+        current_actors = signal.get("actors", [])
+        signal["actors"] = list(set(current_actors + entities["military_units"]))
+
+    return signal
+
+def detect_pattern(signal):
+    """Detect conflict patterns from signal content."""
+    text = signal.get("content", "").lower()
+
+    patterns = {
+        "military_escalation": ["attack", "offensive", "invasion", "military buildup"],
+        "ceasefire_violation": ["ceasefire", "violation", "attacked", "fired"],
+        "humanitarian_crisis": ["civilians", "casualties", "refugees", "humanitarian"],
+        "diplomatic_tension": ["ultimatum", "talks collapse", "diplomat", "sanctions"],
+        "cyber_activity": ["cyber", "hack", "jamming", "gps disruption"],
+        "drone_activity": ["drone", "uav", "reconnaissance", "surveillance"],
+    }
+
+    detected = []
+    for pattern_name, keywords in patterns.items():
+        if any(kw in text for kw in keywords):
+            detected.append(pattern_name)
+
+    return detected if detected else ["general_activity"]
