@@ -1,0 +1,145 @@
+# Conflict Early Warning System - Dashboard Specification
+
+## Project Overview
+- **Name**: Conflict Early Warning System (CEWS)
+- **Type**: Real-time intelligence monitoring dashboard
+- **Core Functionality**: Displays triggered intelligence briefs with threat scores, live OSINT feeds, and geographic risk visualization
+- **Target Users**: Security analysts, intelligence teams at SunHacks 2K26
+
+## Visual & Rendering Specification
+
+### Theme & Colors
+- **Background Primary**: `#0a0e1a` (deep navy)
+- **Background Secondary**: `#111827` (card backgrounds)
+- **Background Tertiary**: `#1f2937` (elevated elements)
+- **Accent Primary**: `#00f0ff` (cyan glow)
+- **Accent Secondary**: `#3b82f6` (blue highlights)
+- **Danger/High Threat**: `#ef4444` (red)
+- **Warning/Medium Threat**: `#f59e0b` (amber)
+- **Success/Low Threat**: `#22c55e` (green)
+- **Text Primary**: `#f9fafb`
+- **Text Secondary**: `#9ca3af`
+- **Text Muted**: `#6b7280`
+
+### Typography
+- **Font Family**: Inter (Google Fonts), fallback: system-ui, sans-serif
+- **Headings**: Bold, tracking-tight
+- **Body**: Regular weight, leading-relaxed
+- **Monospace elements**: JetBrains Mono for data/numbers
+
+### Layout
+- 7-column responsive grid system
+- Header spans full width
+- Main content: 3-column layout (Alert Panel 60% | Feed 40%)
+- Gap between grid elements: 6 (24px)
+
+## Components
+
+### 1. Header
+- Project title: "Conflict Early Warning System" with shield icon
+- System status indicator: Green pulsing dot + "SYSTEM ACTIVE"
+- Time to Last Signal countdown (mm:ss format, updates live)
+
+### 2. Alert Panel (Primary)
+- Section title: "TRIGGERED BRIEFS" with warning badge count
+- Scrollable list of BriefCards
+- Each BriefCard contains:
+  - Circular gauge showing Composite Threat Score (0-10)
+  - Signal velocity indicator (trending up/down arrow + percentage)
+  - Brief title
+  - Top 3 entities (actors/locations) as chips
+  - Timestamp
+  - "Source Traceability" expandable button
+  - Severity-based left border color
+
+### 3. BriefCard Details
+- **Threat Score Gauge**: SVG circular progress, color-coded
+  - 0-4: Green
+  - 5-6: Amber
+  - 7-8: Orange
+  - 9-10: Red with pulse animation
+- **Signal Velocity**: Arrow icon + percentage change
+- **Entities**: Pills with icons (user for actors, map-pin for locations)
+- **Source Traceability**: Click reveals list of cited URLs
+
+### 4. Intelligence Feed (Sidebar)
+- Section title: "LIVE INTELLIGENCE FEED"
+- Source badges: X, Reddit, NewsAPI, Telegram with distinct colors
+- Auto-scrolling feed items (newest at top)
+- Each item shows: source icon, content snippet, timestamp, sentiment indicator
+
+### 5. Geographic Heatmap (Placeholder)
+- Styled container with gradient background
+- "REGIONAL RISK CONCENTRATION" header
+- Grid pattern suggesting a map
+- Hotspot indicators (pulsing circles)
+- Mock coordinates and region labels
+
+### 6. Intelligence Brief Modal
+- Overlay with backdrop blur
+- Executive Summary section
+- Sentiment Hostility Rating (visual bar)
+- Pattern Match Signature (highlighted text)
+- Close button
+- Animation: scale + fade in
+
+## Interaction Specification
+
+### User Controls
+- Click BriefCard → Opens Intelligence Brief Modal
+- Click "Source Traceability" → Expands URL list inline
+- Hover on cards → Subtle glow effect
+- Close modal → Click X or backdrop
+
+### Animations
+- Pulse animation on high threat scores (>= 9)
+- Smooth transitions (300ms ease)
+- Feed items slide in from right
+- Modal scales in (0.95 → 1.0)
+
+## Mock Data Structure
+
+### Briefs Array
+```javascript
+{
+  id: string,
+  title: string,
+  threatScore: number (0-10),
+  signalVelocity: number (percentage change),
+  entities: { actors: string[], locations: string[] },
+  timestamp: Date,
+  sources: string[],
+  summary: string,
+  sentimentHostility: number (0-100),
+  patternMatch: string
+}
+```
+
+### Feed Items Array
+```javascript
+{
+  id: string,
+  source: 'X' | 'Reddit' | 'NewsAPI' | 'Telegram',
+  content: string,
+  timestamp: Date,
+  sentiment: 'positive' | 'negative' | 'neutral'
+}
+```
+
+## Technical Stack
+- React 18
+- Vite
+- Tailwind CSS 3
+- Lucide React (icons)
+- No additional UI libraries
+
+## Acceptance Criteria
+1. Dashboard renders with all 4 main sections (Header, Alert Panel, Feed, Heatmap)
+2. Mock data displays immediately with no API calls
+3. Modal opens on card click with all details
+4. Source traceability expands/collapses
+5. Live feed shows scrolling items
+6. Threat gauges display correct colors per score
+7. Responsive layout works on desktop (1024px+)
+8. All interactive elements have hover/active states
+9. No console errors on load
