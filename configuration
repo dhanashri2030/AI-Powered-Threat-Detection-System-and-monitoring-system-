@@ -1,0 +1,40 @@
+# API Keys
+GEMINI_API_KEY = "AIzaSyBReyq5-0iOHa3le7sJ9bWrZkOmNp_J1zs"
+NEWSAPI_KEY = "3f7328ef55fa4439a66be1e3416676e6"
+YOUTUBE_API_KEY = "AIzaSyDtHgoTsnwvuLC2TEfqncMU0kaSFBKHztw"
+
+# Data sources - Social Media Focus (India Only)
+USE_REDDIT = True
+USE_NEWSAPI = True
+USE_YOUTUBE = True
+USE_SIMULATOR = False
+
+# Focus settings
+FOCUS_COUNTRY = "INDIA"  # Only collect India-related content
+FOCUS_REGION = "South Asia"  # India, Pakistan, Bangladesh, Sri Lanka, Nepal, etc.
+
+# Reddit - India focused subreddits (NO worldnews - too global)
+REDDIT_FEEDS = [
+    "https://www.reddit.com/r/india/new.json?limit=25",
+    "https://www.reddit.com/r/IndiaSpeaks/new.json?limit=25",
+    "https://www.reddit.com/r/Bharat/new.json?limit=25",
+    "https://www.reddit.com/r/Indianews/new.json?limit=25",
+    "https://www.reddit.com/r/IndiaNewsByETV/new.json?limit=25",
+]
+
+# YouTube - India news channels
+YOUTUBE_CHANNELS = [
+    "UC1oHUVakqCIv7t2Ii2j-Ghw",  # India Today
+    "UCBNdXCiHoAd-gFKQAN8mTlg",  # Aaj Tak
+    "UCYPvAkI2ArL4jpU1G8cKuvg",  # WION
+    "UCgMqm_rHQFiEcbTRTCRjT2Q",  # Republic TV
+]
+
+# NewsAPI - India-focused keywords (controversies, protests, conflicts)
+NEWSAPI_QUERY = "(india OR indian) AND (controversy OR protest OR violence OR conflict OR communal OR riots OR election)"
+
+# System settings
+THREAT_THRESHOLD = 6.0  # Slightly lower to catch more
+PIPELINE_INTERVAL = 45  # Process every 45 seconds
+DATABASE_PATH = "cews.db"
+PORT = 8000
